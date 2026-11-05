@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cherry Picker</title>
+<style>
+:root{--bg:#faf9f7;--card:#fff;--ink:#1f1d1a;--mut:#6b675f;--line:#e5e1d8;--acc:#b3362b;--ok:#2f7d4f}
+@media(prefers-color-scheme:dark){:root{--bg:#1a1917;--card:#242321;--ink:#eceae4;--mut:#9a958a;--line:#3a3834;--acc:#ef7a6c;--ok:#6cc790}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px 60px}
+h1{font-size:24px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 10px}p.sub{color:var(--mut);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:640px){.grid{grid-template-columns:1fr}}
+.drop{border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;cursor:pointer;transition:.15s}
+.drop.over{border-color:var(--acc)}.drop.ok{border-style:solid;border-color:var(--ok)}
+.drop b{display:block}.drop span{color:var(--mut);font-size:13px}
+input[type=text],input[type=number]{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+button{padding:8px 14px;border:0;border-radius:8px;background:var(--acc);color:#fff;font:inherit;cursor:pointer}
+button.sec{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;min-width:60px}.bar i{display:block;height:100%;background:var(--acc)}
+.tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;background:var(--line);color:var(--mut)}
+.tag.bad{background:color-mix(in srgb,var(--acc) 18%,transparent);color:var(--acc)}.tag.good{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.err{color:var(--acc)}.mut{color:var(--mut)}.hide{display:none}
+
+.p{margin-bottom:12px}.p>.hd{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline;margin-bottom:6px}
+.pk{padding:8px 0;border-top:1px solid var(--line)}.pk .t{font-variant-numeric:tabular-nums;color:var(--mut)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.chip{padding:2px 9px;border-radius:99px;font-size:13px;background:var(--line);font-variant-numeric:tabular-nums}
+.chip.m{background:color-mix(in srgb,#d98a1f 25%,transparent)}.chip.h{background:color-mix(in srgb,var(--acc) 25%,transparent);color:var(--acc);font-weight:600}
+button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+</style><script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+</head><body><main>
+<h1>Cherry Picker</h1>
+<p class="sub">Carga el CSV de inflow y el de outflow para ver quién toma casos nuevos dejando casos más viejos esperando en la cola.</p>
+<div class="grid">
+ <label class="drop" id="d1"><input type="file" accept=".csv" hidden id="f1"><b>Inflow</b><span id="n1">Arrastra o haz clic (Case Number, Edit Date, New Value)</span></label>
+ <label class="drop" id="d2"><input type="file" accept=".csv" hidden id="f2"><b>Outflow</b><span id="n2">Arrastra o haz clic (Case Number, Edit Date, Case Owner)</span></label>
+</div>
+<p class="mut" style="font-size:13px;margin:10px 0 0">Nota: el inflow debe empezar al menos un día antes del primer outflow; lo ideal es cargar una semana de inflow. Así se sabe cuándo entró cada caso a la cola y se evitan casos excluidos.</p>
+<div class="row" style="margin-top:12px">
+ <label>Tolerancia (min): <input type="number" id="tol" value="0" min="0" style="width:70px"></label>
+ <span class="mut" style="font-size:13px">Ignora saltos cuando el caso saltado entró a la cola hasta X minutos antes del tomado.</span>
+</div>
+<div id="msg" class="err" style="margin-top:10px"></div>
+<h2>Buscar un caso</h2>
+ <div class="row"><input type="text" id="q" placeholder="Ej: 08255537" style="width:200px"><button id="bq">Buscar</button><button class="sec" id="bc">Limpiar</button></div>
+ <div id="caseRes" style="margin-top:12px"></div>
+ <div id="out" class="hide">
+ <div class="row" style="justify-content:flex-end;margin-top:20px"><button id="pdf">Descargar PDF</button></div>
+ <h2>Resumen por persona</h2><div class="card" id="sum"></div>
+ <h2>Quiénes dejaron esperar más tiempo (top 5)</h2><div class="card" id="top5"></div>
+ <h2>Detalle de saltos</h2><div class="row" style="margin-bottom:10px"><button class="sec" id="v1">Por persona</button><button class="sec" id="v2">Por caso ignorado</button></div><div id="det"></div>
+ <p class="mut" id="excl" style="font-size:13px"></p>
+</div>
+<script>
+const $=id=>document.getElementById(id);let inflow=null,outflow=null;
+function parseCSV(t){const rows=[];let r=[],f='',q=false;t=t.replace(/^﻿/,'');
+ for(let i=0;i<t.length;i++){const c=t[i];
+  if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}
+  else if(c=='"')q=true;else if(c==','){r.push(f);f=''}else if(c=='\n'||c=='\r'){if(c=='\r'&&t[i+1]=='\n')i++;r.push(f);f='';if(r.some(x=>x.trim()))rows.push(r);r=[]}else f+=c}
+ if(f||r.length){r.push(f);if(r.some(x=>x.trim()))rows.push(r)}return rows}
+function pd(s){const m=s.trim().match(/^(\d+)\/(\d+)\/(\d+),?\s+(\d+):(\d+)(?::(\d+))?\s*([AP]M)?$/i);if(!m)throw new Error('Fecha no reconocida: '+s);
+ let h=+m[4];if(m[7]){const p=m[7].toUpperCase();if(p=='PM'&&h<12)h+=12;if(p=='AM'&&h==12)h=0}
+ return new Date(+m[3],+m[1]-1,+m[2],h,+m[5],+(m[6]||0))}
+function load(text){const rows=parseCSV(text);rows.shift();return rows.filter(r=>r.length>=3&&r[0].trim()).map(r=>({c:r[0].trim(),t:pd(r[1]),v:r[2].trim()}))}
+const hm=d=>d?d.toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit',hour12:false}):'-';
+const hd=d=>d?d.toLocaleDateString('es',{day:'2-digit',month:'2-digit'})+' '+hm(d):'-';
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function stays(inf,outf){const ev={};
+ inf.forEach(e=>(ev[e.c]=ev[e.c]||[]).push({t:e.t,o:0,k:'in'}));
+ outf.forEach(e=>(ev[e.c]=ev[e.c]||[]).push({t:e.t,o:1,k:'out',who:e.v}));
+ const st=[],noin=[];
+ for(const c in ev){const l=ev[c].sort((a,b)=>a.t-b.t||a.o-b.o);let ent=null;
+  for(const e of l){if(e.k=='in'){if(!ent)ent=e.t}else{if(!ent)noin.push({c,t:e.t,who:e.who});else{st.push({c,ent,pick:e.t,who:e.who});ent=null}}}
+  if(ent)st.push({c,ent,pick:null,who:null})}
+ return{st,noin}}
+function analyze(st,tol){const skips=[];
+ for(const p of st.filter(s=>s.pick))for(const w of st){
+  if(w===p)continue;if((p.ent-w.ent)/60000<=tol&&w.ent<p.ent&&tol>0)continue;
+  if(w.ent>=p.ent||w.ent>=p.pick)continue;
+  if(!w.pick||w.pick>p.pick)skips.push({who:p.who,pc:p.c,pent:p.ent,pt:p.pick,sc:w.c,sent:w.ent,wait:(p.pick-w.ent)/60000})}
+ return skips}
+function run(){$('msg').textContent='';if(!inflow||!outflow)return;
+ try{const tol=+$('tol').value||0;const all=stays(inflow,outflow);const st=all.st.filter(s=>s.pick);const sk=analyze(st,tol);const inS=new Set(inflow.map(e=>e.c)),outS=new Set(outflow.map(e=>e.c)),okS=new Set(st.map(s=>s.c));window._d={st,noin:[],sk,inS,outS,okS,excl:new Set([...inS,...outS].filter(c=>!okS.has(c))).size};render()}catch(e){$('msg').textContent=e.message}}
+function render(){const {st,noin,sk}=window._d;$('out').classList.remove('hide');
+ const by={};st.filter(s=>s.pick).forEach(p=>{(by[p.who]=by[p.who]||{n:0,ch:new Set(),ds:new Set()}).n++});
+ sk.forEach(k=>{by[k.who].ch.add(k.pc);by[k.who].ds.add(k.pc+'>'+k.sc+'|'+(+k.sent))});
+ const rows=Object.entries(by).sort((a,b)=>b[1].ch.size-a[1].ch.size||b[1].ch.size/b[1].n-a[1].ch.size/a[1].n||a[0].localeCompare(b[0]));
+ $('sum').innerHTML='<table><tr><th>Persona</th><th class=n>Tomados correctamente</th><th class=n>Saltos</th><th>% cherry</th></tr>'+
+  rows.map(([w,d])=>{const p=Math.round(100*d.ch.size/d.n);return `<tr><td>${esc(w)}</td><td class=n>${d.n-d.ch.size} <span class=mut>de ${d.n}</span></td><td class=n>${d.ch.size}</td><td><div class=row style="flex-wrap:nowrap"><div class=bar style="flex:1"><i style="width:${p}%"></i></div><span>${p}%</span></div></td></tr>`}).join('')+'</table>';
+ const tp={};sk.forEach(k=>{const t=tp[k.who]=tp[k.who]||{max:0,mc:'',n30:0};if(k.wait>t.max){t.max=k.wait;t.mc=k.sc}if(k.wait>=30){t.s30=t.s30||new Set();t.s30.add(k.pc);t.n30=t.s30.size}});
+ const top=Object.entries(tp).sort((a,b)=>b[1].max-a[1].max||b[1].n30-a[1].n30).slice(0,5);
+ $('top5').innerHTML=top.length?'<table><tr><th>Persona</th><th>Caso que más tiempo esperaba</th><th class=n>Espera (min)</th><th class=n>Saltos con espera ≥30 min</th></tr>'+top.map(([w,t])=>`<tr><td>${esc(w)}</td><td>${t.mc}</td><td class=n>${Math.round(t.max)}</td><td class=n>${t.n30}</td></tr>`).join('')+'</table>':'<span class=mut>Sin saltos.</span>';
+ window._d.rows=rows;window._d.top=top;
+ renderDet();$('excl').textContent=window._d.excl+' casos excluidos del análisis por no tener un inflow seguido de un outflow en los archivos cargados.';
+ if($('q').value.trim())search()}
+function search(){const c=$('q').value.trim().padStart(8,'0');if(!$('q').value.trim())return;if(!window._d){$('caseRes').innerHTML='<p class=err>Primero carga los dos archivos CSV (inflow y outflow).</p>';return}const {st,noin,sk}=window._d;
+ const mine=st.filter(s=>s.c==c),outs=noin.filter(n=>n.c==c);let h=`<div class=card><b>Caso ${c}</b>`;
+ if(!mine.length){const i=window._d.inS.has(c),o=window._d.outS.has(c);h+=`<p class=err>${i||o?'Este caso se excluyó del análisis: aparece solo en '+(i?'inflow':'outflow')+' y no tiene un inflow seguido de un outflow.':'Este caso no aparece en los archivos cargados (ni en inflow ni en outflow). Sube los reportes que incluyan su ventana de tiempo.'}</p>`}
+ mine.forEach(s=>{const ig={};sk.filter(k=>k.sc==c&&+k.sent==+s.ent).forEach(k=>(ig[k.who]=ig[k.who]||[]).push(k));
+  h+=`<p>En cola desde <b>${hm(s.ent)}</b>. ${s.pick?`Tomado a las <b>${hm(s.pick)}</b> por <b>${esc(s.who)}</b>.`:'<span class="tag bad">Sigue en cola</span>'}</p>`;
+  if(s.pick){const snap=st.filter(x=>x!==s&&x.ent<s.pick&&(!x.pick||x.pick>s.pick)).sort((x,y)=>x.ent-y.ent);
+   h+=`<p style="margin-bottom:4px"><b>Cola a las ${hm(s.pick)}</b> (lo que el reporte indica que seguía esperando cuando lo tomó):</p>`+(snap.length?'<table><tr><th>Caso</th><th>En cola desde</th><th>Respecto a este caso</th><th>Después</th></tr>'+snap.map(x=>`<tr><td>${x.c}</td><td>${hm(x.ent)}</td><td>${x.ent<s.ent?'<span class="tag bad">más viejo (saltado)</span>':'más nuevo'}</td><td>${x.pick?'tomado '+hm(x.pick)+' por '+esc(x.who):'sin salida en el reporte'}</td></tr>`).join('')+'</table>':'<p class=mut>No había otros casos en cola según el reporte.</p>')+'<p class=mut style="font-size:12px">Si algún caso de esta lista ya no estaba en la cola (cerrado, movido de cola, etc.), el reporte de outflow no lo registra y por eso aparece como saltado.</p>'}
+  const k=Object.entries(ig);
+  h+=k.length?'<p style="margin-bottom:4px">Lo ignoraron (tomaron casos más nuevos mientras esperaba):</p><table><tr><th>Persona</th><th>Casos que tomó en su lugar</th></tr>'+k.map(([w,l])=>`<tr><td>${esc(w)}</td><td>${l.map(x=>x.pc+' ('+hm(x.pt)+')').join(', ')}</td></tr>`).join('')+'</table>':'<p><span class="tag good">Nadie lo ignoró</span></p>'});
+ outs.forEach(n=>h+=`<p class=mut>Tomado a las ${hm(n.t)} por ${esc(n.who)} sin inflow previo en el reporte; no evaluable.</p>`);
+ $('caseRes').innerHTML=h+'</div>'}
+
+let view=1;
+function chip(c,w){return `<span class="chip ${w>=30?'h':w>=10?'m':''}">${c} · ${Math.round(w)} min</span>`}
+function renderDet(){const {st,sk}=window._d;$('v1').className='sec'+(view==1?' on':'');$('v2').className='sec'+(view==2?' on':'');
+ if(!sk.length){$('det').innerHTML='<div class=card><span class="tag good">Sin saltos</span></div>';return}
+ let h='';
+ if(view==1){const by={};sk.forEach(k=>{((by[k.who]=by[k.who]||{})[k.pc]=by[k.who][k.pc]||{pt:k.pt,pent:k.pent,l:[]}).l.push(k)});
+  const tot={};st.filter(s=>s.pick).forEach(s=>tot[s.who]=(tot[s.who]||0)+1);
+  const cnt=o=>Object.keys(o).length;const mw=o=>Math.max(...Object.values(o).flatMap(x=>x.l.map(k=>k.wait)));const ents=Object.entries(by).sort((a,b)=>cnt(b[1])-cnt(a[1])||mw(b[1])-mw(a[1]));h=ents.slice(0,5).map(([w,pc])=>{
+   const n=Object.keys(pc).length;
+   return `<div class="card p"><div class=hd><b>${esc(w)}</b><span class=mut>${n} salto${n>1?'s':''} de ${tot[w]} casos tomados</span></div>`+
+   Object.entries(pc).sort((a,b)=>a[1].pt-b[1].pt).map(([c,o])=>`<div class=pk><span class=t>${hd(o.pt)}</span> tomó <b>${c}</b> <span class=mut>(en cola desde ${hd(o.pent)})</span><div class=chips><span class=mut>se saltó:</span>${o.l.sort((a,b)=>b.wait-a.wait).map(k=>chip(k.sc,k.wait)).join('')}</div></div>`).join('')+'</div>'}).join('')+(ents.length>5?`<p class=mut>Mostrando 5 de ${ents.length} personas.</p>`:'')}
+ else{const by={};sk.forEach(k=>{((by[k.sc+'|'+(+k.sent)]=by[k.sc+'|'+(+k.sent)]||{c:k.sc,ent:k.sent,w:{}}).w[k.who]=by[k.sc+'|'+(+k.sent)].w[k.who]||[]).push(k)});
+  const lst=Object.values(by).map(o=>({o,s:st.find(x=>x.c==o.c&&+x.ent==+o.ent)})).sort((a,b)=>(b.s.pick-b.s.ent)-(a.s.pick-a.s.ent));h=lst.slice(0,5).map(({o,s})=>{const who=Object.keys(o.w);
+   return `<div class="card p"><div class=hd><b>${o.c}</b><span class=mut>esperó ${Math.round((s.pick-s.ent)/60000)} min · en cola desde ${hd(o.ent)} · tomado ${hd(s.pick)} por ${esc(s.who)}</span></div>`+
+   `<div class=mut style="font-size:13px">Lo ignoraron ${who.length} persona${who.length>1?'s':''}:</div>`+
+   who.sort((a,b)=>o.w[b].length-o.w[a].length).map(w=>`<div class=pk><b>${esc(w)}</b><div class=chips>${o.w[w].sort((a,b)=>a.pt-b.pt).map(k=>`<span class="chip">${k.pc} · ${hd(k.pt)}</span>`).join('')}</div></div>`).join('')+'</div>'}).join('')+(lst.length>5?`<p class=mut>Mostrando 5 de ${lst.length} casos (los que más esperaron).</p>`:'')}
+ $('det').innerHTML=h+'<p class=mut style="font-size:12px">Color del tiempo de espera: gris &lt;10 min, naranja 10-30 min, rojo &ge;30 min.</p>'}
+$('v1').onclick=()=>{view=1;renderDet()};$('v2').onclick=()=>{view=2;renderDet()};
+
+let dl=null;
+try{if(window.claude&&claude.use)claude.use('downloads').then(d=>{dl=d;if(d)$('pdf').classList.remove('hide')}).catch(()=>{})}catch(e){}
+function buildPdf(){
+ const {st,sk,excl}=window._d;const {jsPDF}=window.jspdf;const doc=new jsPDF({unit:'pt',format:'a4'});
+ const T=s=>String(s).replace(/≥/g,'>=');const M=34;let y=44;
+ doc.setFont('helvetica','bold');doc.setFontSize(20);doc.setTextColor(30);doc.text('Cherry Picker',M,y);
+ doc.setFont('helvetica','normal');doc.setFontSize(9.5);doc.setTextColor(110);
+ doc.text(`Generado: ${new Date().toLocaleString('es')}  ·  Casos analizados: ${new Set(st.map(s=>s.c)).size}  ·  Excluidos (sin inflow y outflow): ${excl}`,M,y+16);y+=36;
+ const head=t=>{if(y>740){doc.addPage();y=44}doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(30);doc.text(T(t),M,y);y+=8};
+ const tbl=(cols,rows,opt={})=>{doc.autoTable(Object.assign({startY:y,head:[cols],body:rows,margin:{left:M,right:M},styles:{fontSize:9,cellPadding:4,textColor:30},headStyles:{fillColor:[179,54,43],textColor:255},alternateRowStyles:{fillColor:[247,245,241]}},opt));y=doc.lastAutoTable.finalY+22};
+ const none=()=>{doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(110);doc.text('Sin datos.',M,y+14);y+=36};
+ head('Resumen por persona');
+ const rows=window._d.rows;
+ rows.length?tbl(['Persona','Tomados correctamente','Saltos','% cherry'],rows.map(([w,d])=>[w,`${d.n-d.ch.size} de ${d.n}`,d.ch.size,Math.round(100*d.ch.size/d.n)+'%'],{columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'}}})):none();
+ head('Quiénes dejaron esperar más tiempo (top 5)');
+ const top=window._d.top;
+ top.length?tbl(['Persona','Caso que más tiempo esperaba','Espera (min)','Saltos con espera >=30 min'],top.map(([w,t])=>[w,t.mc,Math.round(t.max),t.n30]),{columnStyles:{2:{halign:'right'},3:{halign:'right'}}}):none();
+ head('Detalle de saltos: personas con más saltos (top 5)');
+ const by={};sk.forEach(k=>{(by[k.who]=by[k.who]||[]).push(k)});
+ const np=l=>new Set(l.map(k=>k.pc)).size;const ps=Object.entries(by).sort((a,b)=>np(b[1])-np(a[1])||Math.max(...b[1].map(k=>k.wait))-Math.max(...a[1].map(k=>k.wait))).slice(0,5);
+ if(ps.length){const body=[];ps.forEach(([w,l])=>{const pk={};l.forEach(k=>(pk[k.pc]=pk[k.pc]||{pt:k.pt,pent:k.pent,l:[]}).l.push(k));
+  Object.entries(pk).sort((a,b)=>a[1].pt-b[1].pt).forEach(([c,o],i)=>body.push([i?'':`${w} (${np(l)} salto${np(l)>1?'s':''})`,hd(o.pt),c,hd(o.pent),o.l.sort((a,b)=>b.wait-a.wait).map(k=>`${k.sc} (${Math.round(k.wait)} min)`).join(', ')]))});
+  tbl(['Persona','Hora','Tomó','En cola desde','Se saltó (espera)'],body,{columnStyles:{0:{cellWidth:95,fontStyle:'bold'},4:{cellWidth:'auto'}}});
+  if(Object.keys(by).length>5){doc.setFontSize(9);doc.setTextColor(110);doc.text(`Mostrando 5 de ${Object.keys(by).length} personas.`,M,y-10)}}else none();
+ head('Casos ignorados que más esperaron (top 5)');
+ const bc={};sk.forEach(k=>{const key=k.sc+'|'+(+k.sent);(bc[key]=bc[key]||{c:k.sc,ent:k.sent,l:[]}).l.push(k)});
+ const cs=Object.values(bc).map(o=>({o,s:st.find(x=>x.c==o.c&&+x.ent==+o.ent)})).sort((a,b)=>(b.s.pick-b.s.ent)-(a.s.pick-a.s.ent)).slice(0,5);
+ cs.length?tbl(['Caso','Esperó (min)','En cola desde','Tomado','Lo ignoraron (tomaron en su lugar)'],cs.map(({o,s})=>{const w={};o.l.forEach(k=>(w[k.who]=w[k.who]||[]).push(`${k.pc} ${hd(k.pt)}`));
+  return [o.c,Math.round((s.pick-s.ent)/60000),hd(o.ent),hd(s.pick)+' '+s.who,Object.entries(w).map(([n,l])=>`${n}: ${l.join(', ')}`).join('\n')]},{columnStyles:{1:{halign:'right'}}})):none();
+ return doc}
+$('pdf').onclick=async()=>{if(!window._d)return;try{const d=buildPdf();const n=new Date();const f='cherry-picker-'+n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0')+'.pdf';
+ if(dl)await dl.save({filename:f,data:d.output('blob')});else d.save(f)}catch(e){if(e&&e.code=='declined')return;$('msg').textContent='No se pudo generar el PDF: '+((e&&e.message)||e)}};
+function wire(i,setter){const inp=$('f'+i),d=$('d'+i);
+ const go=async f=>{if(!f)return;try{setter(load(await f.text()));d.classList.add('ok');$('n'+i).textContent=f.name;run()}catch(e){$('msg').textContent=f.name+': '+e.message}};
+ inp.onchange=()=>go(inp.files[0]);
+ d.ondragover=e=>{e.preventDefault();d.classList.add('over')};d.ondragleave=()=>d.classList.remove('over');
+ d.ondrop=e=>{e.preventDefault();d.classList.remove('over');go(e.dataTransfer.files[0])}}
+wire(1,v=>inflow=v);wire(2,v=>outflow=v);
+$('tol').onchange=run;$('bq').onclick=search;$('q').onkeydown=e=>{if(e.key=='Enter')search()};$('bc').onclick=()=>{$('q').value='';$('caseRes').innerHTML=''};
+</script></main></body></html>
